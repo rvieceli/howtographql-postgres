@@ -1,12 +1,12 @@
-function links(parent, args, context) {
-  return context.prisma.user({ id: parent.id }).links();
+function links(parent) {
+  return parent.getLinks();
 }
 
-function votes(parent, args, context) {
-  return context.prisma.user({ id: parent.id }).votes();
+function votes(parent) {
+  return parent.getVotes();
 }
 
-module.exports = {
+export default {
   links,
-  votes
+  votes,
 };

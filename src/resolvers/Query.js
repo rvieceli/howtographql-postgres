@@ -1,38 +1,52 @@
+import Sequelize, { Op } from 'sequelize';
+import Link from '../database/models/Link';
+import { makeOrder } from '../utils';
+
 function info() {
   return `This is the API of a hackernews clone from howtographql.com`;
 }
 
-async function feed(parent, { filter, skip, first, orderBy }, context) {
+async function feed(parent, { filter, skip, first, orderBy }) {
+  const order = orderBy ? [makeOrder(orderBy)] : null;
   const where = filter
     ? {
-        OR: [{ description_contains: filter }, { url_contains: filter }]
+        [Op.or]: [
+          [
+            Sequelize.where(
+              Sequelize.fn('lower', Sequelize.col('description')),
+              {
+                [Op.like]: `%${filter.toLowerCase()}%`,
+              }
+            ),
+          ],
+          [
+            Sequelize.where(Sequelize.fn('lower', Sequelize.col('url')), {
+              [Op.like]: `%${filter.toLowerCase()}%`,
+            }),
+          ],
+        ],
       }
-    : {};
+    : null;
 
-  const links = await context.prisma.links({
+  const { rows: links, count } = await Link.findAndCountAll({
     where,
-    skip,
-    first,
-    orderBy
+    limit: first,
+    offset: skip,
+    order,
   });
-
-  const count = await context.prisma
-    .linksConnection({ where })
-    .aggregate()
-    .count();
 
   return {
     links,
-    count
+    count,
   };
 }
 
-function link(parent, { id }, context, info) {
-  return context.prisma.link({ id });
+function link(parent, { id }) {
+  return Link.findByPk(id);
 }
 
-module.exports = {
+export default {
   info,
   feed,
-  link
+  link,
 };

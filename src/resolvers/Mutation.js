@@ -1,104 +1,127 @@
-const jwt = require("jsonwebtoken");
-const bcrypt = require("bcryptjs");
-const { getUserId } = require("../utils");
+import User from '../database/models/User';
+import Link from '../database/models/Link';
+import Vote from '../database/models/Vote';
 
-async function signup(parent, { email, password, name }, context) {
-  const passwordHash = await bcrypt.hash(password, 8);
-  const user = await context.prisma.createUser({
+import { getUserId } from '../utils';
+
+async function signup(parent, { email, password, name }) {
+  const exists = await User.findByEmail(email);
+
+  if (exists) {
+    throw new Error('Email has been exists');
+  }
+
+  const user = await User.create({
     email,
-    password: passwordHash,
-    name
+    password,
+    name,
   });
 
-  const token = jwt.sign({ userId: user.id }, process.env.APP_SECRET);
+  const token = user.generateToken();
 
   return {
     token,
-    user
+    user,
   };
 }
 
-async function login(parent, { email, password }, context) {
-  const user = await context.prisma.user({ email });
+async function login(parent, { email, password }) {
+  const user = await User.findByEmail(email);
 
   if (!user) {
-    throw new Error("User not found or invalid password");
+    throw new Error('User not found or invalid password');
   }
 
-  const valid = await bcrypt.compare(password, user.password);
+  const valid = await user.checkPassword(password);
 
   if (!valid) {
-    throw new Error("User not found or invalid password");
+    throw new Error('User not found or invalid password');
   }
 
-  const token = jwt.sign({ userId: user.id }, process.env.APP_SECRET);
+  const token = user.generateToken();
 
   return {
     token,
-    user
+    user,
   };
 }
 
-function post(parent, { description, url }, context) {
-  const userId = getUserId(context);
+async function post(parent, { description, url }, { request, pubsub }) {
+  const userId = getUserId(request);
 
-  return context.prisma.createLink({
+  const newLink = await Link.create({
     url,
     description,
-    postedBy: { connect: { id: userId } }
+    posted_by: userId,
   });
+
+  pubsub.publish('NEW_LINK', {
+    newLink,
+  });
+
+  return newLink;
 }
 
-async function updateLink(parent, { id, description, url }, context) {
-  const userId = getUserId(context);
+async function updateLink(parent, { id, description, url }, { request }) {
+  const userId = getUserId(request);
 
-  const user = await context.prisma.link({ id }).postedBy();
+  const link = await Link.findByPk(id);
 
-  if (!user || user.id !== userId) {
+  if (!link || link.posted_by !== userId) {
     throw new Error("You can't update this link");
   }
 
-  return context.prisma.updateLink({
-    data: { description, url },
-    where: { id }
+  return link.update({
+    description,
+    url,
   });
 }
 
 async function deleteLink(parent, { id }, context) {
   const userId = getUserId(context);
 
-  const user = await context.prisma.link({ id }).postedBy();
+  const link = await Link.findByPk(id);
 
-  if (!user || user.id !== userId) {
+  if (!link || link.posted_by !== userId) {
     throw new Error("You can't delete this link");
   }
 
-  return context.prisma.deleteLink({ id });
+  await link.destroy();
+
+  return link;
 }
 
-async function vote(parent, { linkId }, context) {
-  const userId = getUserId(context);
+async function vote(parent, { linkId }, { request, pubsub }) {
+  const userId = getUserId(request);
 
-  const exists = await context.prisma.$exists.vote({
-    user: { id: userId },
-    link: { id: linkId }
+  const exists = await Vote.findOne({
+    where: {
+      user_id: userId,
+      link_id: linkId,
+    },
   });
 
   if (exists) {
     throw new Error(`Already voted for link: ${linkId}`);
   }
 
-  return context.prisma.createVote({
-    user: { connect: { id: userId } },
-    link: { connect: { id: linkId } }
+  const newVote = await Vote.create({
+    user_id: userId,
+    link_id: linkId,
   });
+
+  pubsub.publish('NEW_VOTE', {
+    newVote,
+  });
+
+  return newVote;
 }
 
-module.exports = {
+export default {
   signup,
   login,
   post,
   updateLink,
   deleteLink,
-  vote
+  vote,
 };
